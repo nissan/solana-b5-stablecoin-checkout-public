@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+# The template declares Node >=24; this repository pins Node 22 and refuses anything else.
+engineStrict: true

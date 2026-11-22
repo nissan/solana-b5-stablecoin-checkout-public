@@ -1,0 +1,22 @@
+# app
+
+The Stablecoin checkout: Next.js, `@solana/pay`, `@solana/kit`, the Kit wallet plugin (Wallet Standard), `@solana/react` and Vercel UI SDK. Generated from the create-solana-dapp `kit/nextjs` template, with the template's demo actions (airdrop, SOL transfer, token and memo cards) removed. Setup, environment variables, pinned versions and status are in the [repository README](../README.md).
+
+## What is here
+
+- **Order page** ([`app/page.tsx`](app/page.tsx), [`components/checkout/order-form.tsx`](app/components/checkout/order-form.tsx)): the merchant enters an amount and the server creates the order.
+- **Checkout page** ([`app/orders/[id]/page.tsx`](app/orders/[id]/page.tsx), [`components/checkout/checkout-view.tsx`](app/components/checkout/checkout-view.tsx)): the Solana Pay QR drawn by `@solana/pay`'s `createQR`, with its link: a transaction request when `PUBLIC_URL` is set, else a transfer request. It polls the order every 1.5 s for as long as it is open. It shows the receipt with the amount received once paid, each rejected payment with its reason, any money owed back with its total, and each wallet that asked to pay and could not, with the reason.
+- **API** under [`app/api/orders`](app/api/orders): `POST /api/orders` creates an order, `GET /api/orders/{id}` reads it and checks the chain, `POST /api/orders/{id}/confirm` checks one given signature, and `/api/orders/{id}/pay` serves the transaction request: `GET` for the wallet's label and icon, `POST {account}` for the unsigned transaction or a refusal.
+- **Wallet check** ([`lib/checkout/request.ts`](app/lib/checkout/request.ts)): before building a wallet's transaction, reads its SOL and USDC and refuses with a reason if the order is paid, the wallet is empty, short of USDC, or short of SOL for the fee and rent exemption.
+- **Payment check** ([`lib/checkout/payment.ts`](app/lib/checkout/payment.ts)): runs `validateTransfer` (recipient, mint, amount, reference) on every transaction carrying the order's reference, and lets a signature pay one order. It keeps checking a paid order: a later valid payment, an overpayment's excess and a rejected underpayment's money are recorded as owed back, the amount read from the merchant's token balance change. Compute Budget instructions a wallet appended after the transfer are set aside first ([`lib/checkout/validation.ts`](app/lib/checkout/validation.ts), shared with `devnet:verify-payment`). Orders are held in memory ([`lib/checkout/orders.ts`](app/lib/checkout/orders.ts)).
+- **Devnet scripts** in [`scripts/`](scripts): `devnet:merchant-account` makes a merchant address payable; `devnet:pay` pays an order as a scripted customer, optionally with another amount; `devnet:verify-payment` reads a payment back independently of the server.
+- Wallet connection through Wallet Standard discovery, with the connected balance shown, and a network switcher, both from the template.
+- `@solana/pay` 1.2.0 installed from [`vendor/solana-pay-1.2.0.tgz`](vendor/README.md), a build of upstream's unpublished kit 8 version, sharing the app's `@solana/kit` 8.
+
+## Tests
+
+All offline, under `pnpm run ci`. Surfpool supports Linux x64 and macOS.
+
+- [`tests/checkout.test.ts`](tests/checkout.test.ts): the B5-002 scenarios, through the real route handlers, with real token transfers on an in-process [Surfpool](https://www.npmjs.com/package/@solana/surfpool) validator.
+- [`tests/checkout-ui.test.tsx`](tests/checkout-ui.test.tsx): the order form and checkout page in jsdom against a stubbed `fetch`.
+- [`tests/app.test.tsx`](tests/app.test.tsx): connects a mock Wallet Standard wallet ([`tests/mock-wallet.ts`](tests/mock-wallet.ts)), reads its balance from Surfpool and round-trips a Solana Pay URL.
