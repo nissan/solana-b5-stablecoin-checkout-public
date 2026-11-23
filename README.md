@@ -2,7 +2,10 @@
 
 A checkout that takes payment in a stablecoin on Solana. A merchant creates an order; the customer pays it with a Solana wallet by scanning a Solana Pay QR code; the server finds the payment on chain, checks it and shows a receipt. Orders can be priced in USDC or in a second currency, and a webhook provider can tell the server about a payment so it does not have to keep asking the chain. It runs on devnet only.
 
-This is Deed #5 of The Solana Deeds, a series of one-day learning builds. [Read the write-up](https://reddi.tech/blog/solana-b5-stablecoin-checkout) and [watch the demo](https://youtu.be/gIUIRtcEszs). Both were made before the second currency and the webhook were added, so they do not show them.
+This is Deed #5 of The Solana Deeds, a series of one-day learning builds. It was published in two parts.
+
+- **Part one**, the USDC checkout: [write-up](https://reddi.tech/blog/solana-b5-stablecoin-checkout) and [demo](https://youtu.be/gIUIRtcEszs). Both were made before the second currency and the webhook were added, so they do not show them.
+- **Part two**, the second currency and the webhook: [write-up](https://reddi.tech/blog/solana-b5-stablecoin-checkout-part-two) and [demo](https://youtu.be/2oWgf6E7pNU).
 
 This is a source snapshot of `857df9e920e0646e72deb9e2a2c7753911b48af0`. An earlier snapshot, of `597e2b156f75d9869eb71fef208f39f56354d685`, is the first commit here. The private build journal, issue history, evidence files and hosted checks are not part of this repository. Test names and a few comments carry labels such as `B5-002` and `D-11`; they are outcome and decision numbers from that private plan.
 
