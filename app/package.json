@@ -16,6 +16,8 @@
     "build": "next build",
     "ci": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test",
     "dev": "next dev",
+    "devnet:audd": "node scripts/devnet-audd.mts",
+    "devnet:helius-webhook": "node scripts/devnet-helius-webhook.mts",
     "devnet:merchant-account": "node scripts/devnet-merchant-account.mts",
     "devnet:pay": "node scripts/devnet-pay.mts",
     "devnet:reproduce": "node scripts/devnet-reproduce.mts",

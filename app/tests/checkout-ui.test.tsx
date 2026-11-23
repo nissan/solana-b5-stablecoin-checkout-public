@@ -36,6 +36,7 @@ const unpaid: PublicOrder = {
   id: "0b6c7f1e-0000-4000-8000-000000000001",
   amount: "12.50",
   currency: "USDC",
+  currencyNote: null,
   merchant,
   mint,
   cluster: "devnet",
@@ -66,6 +67,7 @@ const paid: PublicOrder = {
     commitment: "confirmed",
     received: "12.50",
     paidAt: "2026-11-21T09:00:06.000Z",
+    foundBy: "poll",
   },
   events: [
     ...unpaid.events,
@@ -137,6 +139,7 @@ describe("checkout page", () => {
     expect(receipt.textContent).toContain(signature);
     expect(receipt.textContent).toContain("confirmed");
     expect(receipt.textContent).toContain("12.50 USDC");
+    expect(receipt.textContent).toContain("this page's polling");
     const link = screen.getByRole("link", { name: signature });
     expect(link.getAttribute("href")).toBe(
       `https://explorer.solana.com/tx/${signature}?cluster=devnet`
@@ -269,8 +272,11 @@ describe("order form", () => {
       expect(push).toHaveBeenCalledWith(`/orders/${unpaid.id}`)
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // One currency on offer: no selector, and the order is in it.
+    expect(screen.queryByRole("radiogroup")).toBeNull();
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       amount: "12.50",
+      currency: "USDC",
     });
   });
 
@@ -293,5 +299,89 @@ describe("order form", () => {
       screen.getByLabelText("Order amount (USDC)").getAttribute("aria-invalid")
     ).toBe("true");
     expect(push).not.toHaveBeenCalled();
+  });
+
+  test("B5-004-S3: with two currencies on offer the merchant picks one, and the order is created in it", async () => {
+    const fetchMock = vi.fn<typeof fetch>(() => respond(unpaid, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <OrderForm
+        currencies={[
+          { currency: "USDC", note: null },
+          {
+            currency: "AUDD",
+            note: "a stand-in test token: the issuer's AUDD exists only on mainnet",
+          },
+        ]}
+      />
+    );
+
+    // USDC first, as before.
+    const usdc = screen.getByRole("radio", { name: "USDC" });
+    const audd = screen.getByRole("radio", { name: "AUDD" });
+    expect(usdc.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByLabelText("Order amount (USDC)")).toBeTruthy();
+
+    fireEvent.click(audd);
+    expect(audd.getAttribute("aria-checked")).toBe("true");
+    expect(usdc.getAttribute("aria-checked")).toBe("false");
+    // The amount field now says which currency it is in, and what AUDD is here.
+    const field = screen.getByLabelText("Order amount (AUDD)");
+    expect(document.body.textContent).toContain("stand-in test token");
+    expect(document.body.textContent).toContain(
+      "No conversion between currencies"
+    );
+
+    // The UI SDK input listens for "input", which is what typing sends.
+    fireEvent.input(field, { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create order" }));
+    await vi.waitFor(() => expect(push).toHaveBeenCalled());
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      amount: "20",
+      currency: "AUDD",
+    });
+  });
+});
+
+describe("checkout page for an AUDD order", () => {
+  const auddMint = address("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU");
+  const auddPaid: PublicOrder = {
+    ...paid,
+    currency: "AUDD",
+    currencyNote:
+      "a stand-in test token: the issuer's AUDD exists only on mainnet",
+    mint: auddMint,
+    receipt: { ...paid.receipt!, received: "15.00", foundBy: "webhook" },
+    refundDue: "2.50",
+    refunds: [
+      {
+        signature,
+        amount: "2.50",
+        reason: "overpaid",
+        at: "2026-11-21T09:00:06.000Z",
+      },
+    ],
+  };
+
+  test("B5-004-S3: the amount, the receipt and the refund all name AUDD, with its note and how it was found", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => respond(auddPaid))
+    );
+    render(<CheckoutView id={auddPaid.id} />);
+
+    const receipt = await screen.findByLabelText("Receipt");
+    expect(receipt.textContent).toContain("15.00 AUDD");
+    expect(receipt.textContent).toContain("a webhook call");
+    expect(screen.getByLabelText("To refund").textContent).toContain(
+      "To refund: 2.50 AUDD"
+    );
+    expect(screen.getByLabelText("To refund").textContent).toContain(
+      "2.50 AUDD, paid more than the order"
+    );
+    expect(document.body.textContent).toContain("12.50 AUDD");
+    expect(document.body.textContent).toContain("stand-in test token");
+    // Nothing on an AUDD order is labelled USDC.
+    expect(document.body.textContent).not.toContain("USDC");
   });
 });

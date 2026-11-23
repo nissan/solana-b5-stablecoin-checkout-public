@@ -1,7 +1,10 @@
 // Read a checkout payment back from devnet at "finalized", independently of
 // the app, and check it against the order the checkout page showed.
 //
-//   node scripts/devnet-verify-payment.mts <signature> <merchant> <amount> <reference>
+//   [MINT=<mint>] node scripts/devnet-verify-payment.mts <signature> <merchant> <amount> <reference>
+//
+// The mint is Circle's devnet USDC unless MINT names another, such as the
+// stand-in AUDD of an AUDD order.
 //
 // Read-only: it signs nothing and needs no key. It refuses any RPC whose
 // genesis hash is not devnet's, runs @solana/pay's validateTransfer at
@@ -31,7 +34,9 @@ const signature = toSignature(sig);
 const merchant = address(merchantArg);
 const reference = address(referenceArg);
 const amount = Number(amountArg);
-const mint = address(process.env.USDC_MINT?.trim() || DEVNET_USDC_MINT);
+const mint = address(
+  process.env.MINT?.trim() || process.env.USDC_MINT?.trim() || DEVNET_USDC_MINT
+);
 const rpc = createSolanaRpc(
   process.env.SOLANA_RPC_URL?.trim() || "https://api.devnet.solana.com"
 );
@@ -61,7 +66,7 @@ console.log(
 // validateTransfer accepts any amount at or above the expected one; the
 // balance lines below show what actually moved.
 console.log(
-  `validated   finalized: at least ${amount} USDC to ${merchant}, mint ${mint}, reference ${reference}`
+  `validated   finalized: at least ${amount} of mint ${mint} to ${merchant}, reference ${reference}`
 );
 const pre = transaction.meta?.preTokenBalances ?? [];
 for (const post of transaction.meta?.postTokenBalances ?? []) {
@@ -73,6 +78,6 @@ for (const post of transaction.meta?.postTokenBalances ?? []) {
     BigInt(post.uiTokenAmount.amount) -
     BigInt(before?.uiTokenAmount.amount ?? "0");
   console.log(
-    `balance     ${post.owner}: ${delta >= 0n ? "+" : ""}${delta} base units of USDC`
+    `balance     ${post.owner}: ${delta >= 0n ? "+" : ""}${delta} base units of that mint`
   );
 }

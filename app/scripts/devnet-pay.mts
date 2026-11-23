@@ -7,7 +7,7 @@
 // to try an overpayment or an underpayment, which a wallet scanning the QR
 // cannot do. It refuses to sign unless the RPC's genesis hash is devnet's,
 // prints the signature and explorer link before sending, waits for
-// "finalized" and reads both USDC balances back. The keypair is read by path
+// "finalized" and reads both token balances back. The keypair is read by path
 // and never printed.
 import { readFileSync } from "node:fs";
 import {
@@ -128,5 +128,5 @@ console.log("status       finalized");
 
 const [customerAfter, merchantAfter] = await balances();
 console.log(
-  `read back    customer ${customerBefore} -> ${customerAfter}, merchant ${merchantBefore} -> ${merchantAfter} (USDC base units)`
+  `read back    customer ${customerBefore} -> ${customerAfter}, merchant ${merchantBefore} -> ${merchantAfter} (base units of the link's token)`
 );

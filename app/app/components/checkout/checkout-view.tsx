@@ -3,7 +3,11 @@
 import { Button } from "@ui-sdk/react/button";
 import { useEffect, useState } from "react";
 import { jsonString } from "../../lib/checkout/json";
-import type { PublicOrder, RefundReason } from "../../lib/checkout/orders";
+import type {
+  FoundBy,
+  PublicOrder,
+  RefundReason,
+} from "../../lib/checkout/orders";
 import { ellipsify, getExplorerUrl } from "../../lib/explorer";
 import { PaymentQR } from "./payment-qr";
 
@@ -13,6 +17,13 @@ const REFUND_REASONS: Readonly<Record<RefundReason, string>> = {
   overpaid: "paid more than the order",
   "paid again": "paid again after the order was paid",
   underpaid: "too little to pay the order",
+};
+
+/** What prompted the server to read the paying transaction from the chain. */
+const FOUND_BY: Readonly<Record<FoundBy, string>> = {
+  poll: "this page's polling",
+  webhook: "a webhook call",
+  confirm: "a submitted signature",
 };
 
 type OrderResponse = PublicOrder & { checkError?: string | null };
@@ -93,7 +104,7 @@ export function CheckoutView({ id }: { id: string }) {
 
       <div className="flex flex-col gap-4">
         <p className="text-4xl font-black tracking-tight">
-          {order.amount} <span className="text-muted">USDC</span>
+          {order.amount} <span className="text-muted">{order.currency}</span>
         </p>
         <p
           role="status"
@@ -126,7 +137,9 @@ export function CheckoutView({ id }: { id: string }) {
               </a>
             </dd>
             <dt className="text-muted">Received</dt>
-            <dd className="font-mono">{order.receipt.received} USDC</dd>
+            <dd className="font-mono">
+              {order.receipt.received} {order.currency}
+            </dd>
             <dt className="text-muted">Slot</dt>
             <dd className="font-mono">{order.receipt.slot}</dd>
             <dt className="text-muted">Block time</dt>
@@ -135,13 +148,15 @@ export function CheckoutView({ id }: { id: string }) {
             </dd>
             <dt className="text-muted">Confirmed as</dt>
             <dd className="font-mono">{order.receipt.commitment}</dd>
+            <dt className="text-muted">Found by</dt>
+            <dd className="font-mono">{FOUND_BY[order.receipt.foundBy]}</dd>
           </dl>
         ) : null}
 
         {order.refunds.length > 0 ? (
           <section aria-label="To refund">
             <h2 className="text-sm font-semibold text-destructive">
-              To refund: {order.refundDue} USDC
+              To refund: {order.refundDue} {order.currency}
             </h2>
             <ul className="mt-1 flex flex-col gap-1 text-sm">
               {order.refunds.map((refund) => (
@@ -158,7 +173,8 @@ export function CheckoutView({ id }: { id: string }) {
                   >
                     {ellipsify(refund.signature, 6)}
                   </a>
-                  : {refund.amount} USDC, {REFUND_REASONS[refund.reason]}
+                  : {refund.amount} {order.currency},{" "}
+                  {REFUND_REASONS[refund.reason]}
                 </li>
               ))}
             </ul>
@@ -174,7 +190,12 @@ export function CheckoutView({ id }: { id: string }) {
           </dd>
           <dt className="text-muted">Token</dt>
           <dd className="font-mono" title={order.mint}>
-            USDC {ellipsify(order.mint, 6)}
+            {order.currency} {ellipsify(order.mint, 6)}
+            {order.currencyNote ? (
+              <span className="block font-sans text-xs text-muted">
+                {order.currencyNote}
+              </span>
+            ) : null}
           </dd>
           <dt className="text-muted">Reference</dt>
           <dd className="font-mono" title={order.reference}>

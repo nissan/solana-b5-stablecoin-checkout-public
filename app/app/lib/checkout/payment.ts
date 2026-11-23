@@ -10,7 +10,9 @@ import {
   type TransactionError,
 } from "@solana/kit";
 import { validateTransfer, ValidateTransferError } from "@solana/pay";
-import type { Order, OrderStore } from "./orders";
+import { formatUnits } from "./amount";
+import { type CheckoutConfig, type Token, tokensOf } from "./config";
+import type { FoundBy, Order, OrderStore } from "./orders";
 import { forValidation } from "./validation";
 
 export type PaymentRpc = Rpc<
@@ -89,11 +91,11 @@ function receivedUnits(
   return held(meta?.postTokenBalances) - held(meta?.preTokenBalances);
 }
 
-async function receivedBy(
+/** The token balances a transaction left behind, read at "confirmed". */
+async function metaOf(
   rpc: PaymentRpc,
-  signature: Signature,
-  order: Order
-): Promise<bigint> {
+  signature: Signature
+): Promise<BalanceMeta> {
   const transaction = await rpc
     .getTransaction(signature, {
       commitment: "confirmed",
@@ -101,10 +103,43 @@ async function receivedBy(
       maxSupportedTransactionVersion: 0,
     })
     .send();
-  return transaction
-    ? receivedUnits(transaction.meta, order.merchant, order.mint)
-    : 0n;
+  return transaction ? transaction.meta : null;
 }
+
+/**
+ * If a rejected transaction moved one of the checkout's other tokens to the
+ * merchant, say so: the customer paid, in the wrong currency. That money is
+ * not counted for this order and is not added to what the order owes back.
+ */
+async function wrongCurrency(
+  rpc: PaymentRpc,
+  signature: Signature,
+  order: Order,
+  tokens: readonly Token[]
+): Promise<string | null> {
+  const others = tokens.filter((token) => token.mint !== order.mint);
+  if (others.length === 0) return null;
+  const meta = await metaOf(rpc, signature);
+  for (const other of others) {
+    const units = receivedUnits(meta, order.merchant, other.mint);
+    if (units > 0n) {
+      return `paid in ${other.currency}, but this order is priced in ${order.currency}: ${formatUnits(units)} ${other.currency} reached the merchant and is not counted for this order`;
+    }
+  }
+  return null;
+}
+
+export type CheckOptions = Readonly<{
+  /**
+   * One signature the caller already has, such as a wallet's receipt or one a
+   * webhook named, to check instead of listing the reference.
+   */
+  candidate?: Signature;
+  /** What prompted this check; recorded on the receipt. */
+  foundBy?: FoundBy;
+  /** Every token the checkout offers, to name a payment in the wrong one. */
+  tokens?: readonly Token[];
+}>;
 
 /**
  * Judge the transactions that carry an order's reference, oldest first. The
@@ -113,6 +148,7 @@ async function receivedBy(
  * logged against the order and not judged again:
  * - a later valid payment, after the order is paid, is money to refund;
  * - an underpayment is rejected, and the money it moved is money to refund;
+ * - a payment in the checkout's other currency is rejected, naming both;
  * - anything else is rejected with its reason.
  * Paying more than the order also records the excess as money to refund.
  * A paid order keeps being checked, so a second payment is still seen.
@@ -120,15 +156,17 @@ async function receivedBy(
  * findReference is not used: it returns only the oldest transaction, so an
  * order whose first payment was rejected could never see a later correct one.
  *
- * `candidate` checks one signature the caller already has, such as a wallet's
- * receipt, instead of listing the reference.
+ * Whatever prompted the check, the verdict comes from the chain: a candidate
+ * signature is only where to look.
  */
 export async function checkPayment(
   store: OrderStore,
   order: Order,
   rpc: PaymentRpc,
-  candidate?: Signature
+  options: CheckOptions = {}
 ): Promise<void> {
+  const { candidate, tokens = [] } = options;
+  const foundBy: FoundBy = options.foundBy ?? (candidate ? "confirm" : "poll");
   const listed: { signature: Signature; err?: TransactionError | null }[] =
     candidate
       ? [{ signature: candidate }]
@@ -192,19 +230,38 @@ export async function checkPayment(
       if (order.status === "paid") {
         store.recordRefund(order, signature, received, "paid again");
       } else {
-        store.markPaid(order, signature, {
-          slot: transaction.slot,
-          blockTime: transaction.blockTime,
-          received,
-        });
+        store.markPaid(
+          order,
+          signature,
+          {
+            slot: transaction.slot,
+            blockTime: transaction.blockTime,
+            received,
+          },
+          foundBy
+        );
       }
     } catch (error) {
       if (!(error instanceof ValidateTransferError)) throw error;
       // Not visible at "confirmed" yet: judge it on a later check.
       if (error.message === "not found") continue;
-      store.reject(order, signature, reasonFor(error));
+      const otherCurrency =
+        error.message === "amount not transferred"
+          ? null
+          : await wrongCurrency(rpc, signature, order, tokens);
+      store.reject(
+        order,
+        signature,
+        otherCurrency
+          ? `${otherCurrency} (validateTransfer: ${error.message})`
+          : reasonFor(error)
+      );
       if (error.message === "amount not transferred") {
-        const received = await receivedBy(rpc, signature, order);
+        const received = receivedUnits(
+          await metaOf(rpc, signature),
+          order.merchant,
+          order.mint
+        );
         store.recordRefund(order, signature, received, "underpaid");
       }
     }
@@ -228,23 +285,29 @@ const lastCheck = new Map<string, number>();
 
 /**
  * checkPayment for the page's polling: one check per order at a time, and
- * none more often than CHECK_INTERVAL_MS (default 1000), so many open pages
- * do not exhaust a public RPC's rate limit.
+ * none more often than the configured interval, so many open pages do not
+ * exhaust a public RPC's rate limit. Without webhooks that interval is
+ * CHECK_INTERVAL_MS (default 1000). With webhooks on, a webhook call is what
+ * prompts a check, and polling falls back to FALLBACK_CHECK_INTERVAL_MS
+ * (default 15000) in case a call never arrives.
  */
 export function refreshPayment(
   store: OrderStore,
   order: Order,
-  rpc: PaymentRpc
+  rpc: PaymentRpc,
+  config: CheckoutConfig
 ): Promise<void> {
   const running = inflight.get(order.id);
   if (running) return running;
-  const interval = Number(process.env.CHECK_INTERVAL_MS ?? 1000);
+  const interval = config.webhook
+    ? config.webhook.fallbackIntervalMs
+    : config.checkIntervalMs;
   const last = lastCheck.get(order.id) ?? 0;
   if (Date.now() - last < interval) return Promise.resolve();
   lastCheck.set(order.id, Date.now());
-  const check = checkPayment(store, order, rpc).finally(() =>
-    inflight.delete(order.id)
-  );
+  const check = checkPayment(store, order, rpc, {
+    tokens: tokensOf(config),
+  }).finally(() => inflight.delete(order.id));
   inflight.set(order.id, check);
   return check;
 }

@@ -40,7 +40,7 @@ function sol(lamports: bigint): string {
 
 /**
  * Check a wallet against an order before it is asked to sign anything, then
- * build the order's USDC transfer for it to sign, or refuse with a reason a
+ * build the order's token transfer for it to sign, or refuse with a reason a
  * person can act on. Balances are read on the order's cluster, at
  * "confirmed". The transfer is @solana/pay's createTransfer, carrying the
  * order's reference, with the wallet as fee payer; it is returned unsigned.
@@ -68,16 +68,17 @@ export async function answerWallet(
     rpc.getBalance(wallet, { commitment: "confirmed" }).send(),
     fetchMaybeToken(rpc, tokenAccount, { commitment: "confirmed" }),
   ]);
-  const usdc = token.exists ? token.data.amount : 0n;
+  const held = token.exists ? token.data.amount : 0n;
+  const currency = order.currency;
 
-  if (lamports === 0n && usdc === 0n) {
+  if (lamports === 0n && held === 0n) {
     return refuse(
-      `this wallet holds no SOL and no USDC on ${network}; if the wallet is set to another network, switch it to ${network}`
+      `this wallet holds no SOL and no ${currency} on ${network}; if the wallet is set to another network, switch it to ${network}`
     );
   }
-  if (usdc < order.amount.units) {
+  if (held < order.amount.units) {
     return refuse(
-      `this wallet holds ${formatUnits(usdc)} USDC on ${network} and the order is ${order.amount.display} USDC: ${formatUnits(order.amount.units - usdc)} USDC is missing`
+      `this wallet holds ${formatUnits(held)} ${currency} on ${network} and the order is ${order.amount.display} ${currency}: ${formatUnits(order.amount.units - held)} ${currency} is missing`
     );
   }
 
@@ -126,6 +127,6 @@ export async function answerWallet(
   return {
     ok: true,
     transaction: getBase64EncodedWireTransaction(transaction),
-    message: `Pay ${order.amount.display} USDC for order ${order.id.slice(0, 8)}`,
+    message: `Pay ${order.amount.display} ${currency} for order ${order.id.slice(0, 8)}`,
   };
 }

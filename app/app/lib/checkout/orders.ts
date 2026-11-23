@@ -1,7 +1,7 @@
 import { type Address, getAddressDecoder, type Signature } from "@solana/kit";
 import { encodeURL } from "@solana/pay";
 import { type Amount, formatUnits } from "./amount";
-import type { CheckoutConfig, Cluster } from "./config";
+import type { CheckoutConfig, Cluster, Currency, Token } from "./config";
 
 export type OrderEvent = Readonly<{
   at: string;
@@ -15,6 +15,15 @@ export type OrderEvent = Readonly<{
   wallet?: Address;
 }>;
 
+/**
+ * What made the server look at the transaction that paid the order:
+ * - poll: the checkout page's polling;
+ * - webhook: an authenticated webhook call naming the transaction;
+ * - confirm: a caller that submitted the signature.
+ * In every case the server read the transaction from the chain itself.
+ */
+export type FoundBy = "poll" | "webhook" | "confirm";
+
 export type Receipt = Readonly<{
   signature: Signature;
   slot: string;
@@ -23,6 +32,7 @@ export type Receipt = Readonly<{
   /** What actually reached the merchant, which can be more than the order. */
   received: string;
   paidAt: string;
+  foundBy: FoundBy;
 }>;
 
 /**
@@ -43,6 +53,10 @@ export type Refund = Readonly<{
 export type Order = {
   readonly id: string;
   readonly amount: Amount;
+  /** The currency the amount is in. Nothing is converted. */
+  readonly currency: Currency;
+  /** Something the payer should know about this token here, or null. */
+  readonly currencyNote: string | null;
   readonly merchant: Address;
   readonly mint: Address;
   readonly cluster: Cluster;
@@ -92,7 +106,7 @@ export class OrderStore {
     private readonly now: () => Date = () => new Date()
   ) {}
 
-  create(amount: Amount, config: CheckoutConfig): Order {
+  create(amount: Amount, token: Token, config: CheckoutConfig): Order {
     const reference = this.newReference();
     if (this.byReference.has(reference)) {
       throw new OrderStoreError(
@@ -103,7 +117,7 @@ export class OrderStore {
     const url = encodeURL({
       recipient: config.merchant,
       amount: amount.value,
-      splToken: config.mint,
+      splToken: token.mint,
       reference,
       label: LABEL,
       message: `Order ${id.slice(0, 8)}`,
@@ -118,8 +132,10 @@ export class OrderStore {
     const order: Order = {
       id,
       amount,
+      currency: token.currency,
+      currencyNote: token.note,
       merchant: config.merchant,
-      mint: config.mint,
+      mint: token.mint,
       cluster: config.cluster,
       reference,
       url,
@@ -133,12 +149,18 @@ export class OrderStore {
     };
     this.orders.set(id, order);
     this.byReference.set(reference, id);
-    this.log(order, "created", `Order for ${amount.display} USDC`);
+    this.log(order, "created", `Order for ${amount.display} ${order.currency}`);
     return order;
   }
 
   get(id: string): Order | undefined {
     return this.orders.get(id);
+  }
+
+  /** The order a reference belongs to, if it is one of this server's. */
+  findByReference(reference: Address): Order | undefined {
+    const id = this.byReference.get(reference);
+    return id === undefined ? undefined : this.orders.get(id);
   }
 
   /** The order a signature already paid, if any. */
@@ -182,7 +204,7 @@ export class OrderStore {
     this.log(
       order,
       "refund",
-      `${formatUnits(units)} USDC to refund: ${reason}`,
+      `${formatUnits(units)} ${order.currency} to refund: ${reason}`,
       signature
     );
   }
@@ -190,7 +212,8 @@ export class OrderStore {
   markPaid(
     order: Order,
     signature: Signature,
-    found: { slot: bigint; blockTime: bigint | null; received: bigint }
+    found: { slot: bigint; blockTime: bigint | null; received: bigint },
+    foundBy: FoundBy
   ): void {
     if (order.status === "paid" || order.judged.has(signature)) return;
     const owner = this.paidBySignature.get(signature);
@@ -211,9 +234,15 @@ export class OrderStore {
       commitment: "confirmed",
       received: formatUnits(found.received),
       paidAt: this.now().toISOString(),
+      foundBy,
     };
     this.paidBySignature.set(signature, order.id);
-    this.log(order, "paid", `Paid ${order.amount.display} USDC`, signature);
+    this.log(
+      order,
+      "paid",
+      `Paid ${order.amount.display} ${order.currency}`,
+      signature
+    );
     if (found.received > order.amount.units) {
       this.recordRefund(
         order,
@@ -271,7 +300,8 @@ export type PublicRefund = Readonly<{
 export type PublicOrder = Readonly<{
   id: string;
   amount: string;
-  currency: "USDC";
+  currency: Currency;
+  currencyNote: string | null;
   merchant: Address;
   mint: Address;
   cluster: Cluster;
@@ -291,7 +321,8 @@ export function publicOrder(order: Order): PublicOrder {
   return {
     id: order.id,
     amount: order.amount.display,
-    currency: "USDC",
+    currency: order.currency,
+    currencyNote: order.currencyNote,
     merchant: order.merchant,
     mint: order.mint,
     cluster: order.cluster,

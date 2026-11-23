@@ -1,5 +1,5 @@
 import { isSignature } from "@solana/kit";
-import { readCheckoutConfig } from "../../../../lib/checkout/config";
+import { readCheckoutConfig, tokensOf } from "../../../../lib/checkout/config";
 import { jsonField } from "../../../../lib/checkout/json";
 import { orderStore, publicOrder } from "../../../../lib/checkout/orders";
 import { checkPayment, rpcFor } from "../../../../lib/checkout/payment";
@@ -37,11 +37,11 @@ export async function POST(
     );
   }
 
-  await checkPayment(
-    store,
-    order,
-    rpcFor(readCheckoutConfig().rpcUrl),
-    signature
-  );
+  const config = readCheckoutConfig();
+  await checkPayment(store, order, rpcFor(config.rpcUrl), {
+    candidate: signature,
+    foundBy: "confirm",
+    tokens: tokensOf(config),
+  });
   return Response.json(publicOrder(order));
 }
